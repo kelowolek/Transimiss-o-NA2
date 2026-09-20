@@ -37,7 +37,6 @@
         }
         h1 { font-size: 22px; color: #38bdf8; text-align: left; }
         
-        /* Badge do Contador */
         .viewer-badge {
             background-color: #0284c7;
             color: #ffffff;
@@ -118,7 +117,6 @@
     <div class="header-container">
         <h1 id="title">Transmissão de Tela</h1>
         
-        <!-- Badge Visível por Padrão quando a transmissão Iniciar -->
         <div class="viewer-badge" id="viewer-badge" style="display: none;">
             <span class="live-dot"></span>
             <span id="viewer-count">0 pessoas assistindo</span>
@@ -151,7 +149,7 @@
 <script>
     let peer = null;
     let combinedStream = null;
-    let activeConnections = [];
+    let activeConnections = []; // Lista de conexões de dados dos espectadores
 
     const videoElement = document.getElementById('video-player');
     const statusElement = document.getElementById('status');
@@ -209,26 +207,30 @@
                 const streamUrl = `${window.location.origin}${window.location.pathname}?stream=${id}`;
                 shareInput.value = streamUrl;
                 shareContainer.style.display = 'block';
-                viewerBadge.style.display = 'inline-flex'; // Exibe o indicador imediatamente
+                viewerBadge.style.display = 'inline-flex';
                 document.getElementById('start-btn').disabled = true;
                 updateViewerCount();
             });
 
+            // Quando um espectador se conecta via Data Connection
             peer.on('connection', (conn) => {
-                // Aguarda a abertura da conexão de dados para incluir na lista
-                conn.on('open', () => {
-                    activeConnections.push(conn);
-                    peer.call(conn.peer, combinedStream);
-                    updateViewerCount();
-                });
+                // Adiciona conexão à lista imediatamente
+                activeConnections.push(conn);
+                
+                // Realiza a chamada do vídeo para o novo espectador
+                peer.call(conn.peer, combinedStream);
 
-                const removeConn = () => {
-                    activeConnections = activeConnections.filter(c => c !== conn);
+                // Envia a contagem para todo mundo
+                updateViewerCount();
+
+                // Trata a desconexão quando o espectador fecha a aba
+                const handleDisconnect = () => {
+                    activeConnections = activeConnections.filter(c => c.peer !== conn.peer);
                     updateViewerCount();
                 };
 
-                conn.on('close', removeConn);
-                conn.on('error', removeConn);
+                conn.on('close', handleDisconnect);
+                conn.on('error', handleDisconnect);
             });
 
             displayStream.getVideoTracks()[0].onended = () => {
@@ -246,10 +248,12 @@
         const text = count === 1 ? "1 pessoa assistindo" : `${count} pessoas assistindo`;
         viewerCountElement.innerText = text;
 
-        // Envia a contagem atualizada para todas as conexões ativas
+        // Envia o total atualizado para cada espectador conectado
         activeConnections.forEach(conn => {
-            if (conn.open) {
+            try {
                 conn.send({ type: 'VIEWER_COUNT', count: count });
+            } catch (e) {
+                console.error("Erro ao enviar dados ao espectador:", e);
             }
         });
     }
@@ -258,12 +262,14 @@
         peer = new Peer();
 
         peer.on('open', () => {
+            // Conecta canal de dados com o transmissor
             const conn = peer.connect(hostId);
 
             conn.on('open', () => {
-                statusElement.innerText = "Conexão estabelecida com o transmissor...";
+                statusElement.innerText = "Aguardando sinal de vídeo...";
             });
 
+            // Recebe dados transmitidos (ex: contagem de pessoas)
             conn.on('data', (data) => {
                 if (data && data.type === 'VIEWER_COUNT') {
                     const count = data.count;
@@ -272,6 +278,7 @@
                 }
             });
 
+            // Recebe o stream de Vídeo / Áudio
             peer.on('call', (call) => {
                 call.answer();
                 call.on('stream', (remoteStream) => {
