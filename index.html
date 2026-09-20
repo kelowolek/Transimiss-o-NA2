@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transmissão com Áudio Completo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .card {
+            background-color: #1e293b;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+        }
+        h1 { font-size: 22px; color: #38bdf8; margin-bottom: 15px; }
+        .instructions {
+            background: #334155;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 13px;
+            text-align: left;
+            margin-bottom: 15px;
+            line-height: 1.5;
+        }
+        video {
+            width: 100%;
+            max-height: 480px;
+            background-color: #000;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
+        .btn {
+            background-color: #0284c7;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 8px 4px;
+        }
+        .btn-green { background-color: #10b981; }
+        .share-container {
+            margin-top: 15px;
+            display: none;
+            background: #1e293b;
+            border: 1px solid #475569;
+            padding: 12px;
+            border-radius: 8px;
+        }
+        input[type="text"] {
+            width: 65%;
+            padding: 8px;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            background-color: #0f172a;
+            color: #fff;
+        }
+        .status { margin-top: 12px; font-size: 13px; color: #94a3b8; }
+    </style>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+<div class="card">
+    <h1 id="title">Transmissão de Tela com Áudio</h1>
+
+    <div id="instructions-box" class="instructions">
+        💡 <b>Dica essencial para o som funcionar:</b><br>
+        1. Para transmitir o som do <b>YouTube / Navegador</b>: Escolha a opção <b>"Guia do Chrome/Edge"</b> ao transmitir e marque a caixinha <i>"Compartilhar áudio da guia"</i>.<br>
+        2. Para transmitir um <b>Programa ou Jogo</b>: O script tentará capturar o áudio do seu microfone/áudio do sistema.
+    </div>
+
+    <div id="host-controls">
+        <button id="start-btn" class="btn" onclick="startBroadcasting()">🚀 Transmitir Minha Tela</button>
+    </div>
+
+    <div id="viewer-controls" style="display: none;">
+        <button id="unmute-btn" class="btn btn-green" onclick="enableAudio()">🔊 Clique Aqui para Ativar Som</button>
+    </div>
+
+    <div id="share-container" class="share-container">
+        <p style="margin-bottom: 6px; font-size: 14px;">Link para enviar aos espectadores:</p>
+        <input type="text" id="share-link" readonly>
+        <button class="btn" onclick="copyLink()">Copiar</button>
+    </div>
+
+    <video id="video-player" autoplay playsinline controls></video>
+
+    <div id="status" class="status">Aguardando ação...</div>
+</div>
+
+<script>
+    let peer = null;
+    let combinedStream = null;
+    let connectedPeers = [];
+
+    const videoElement = document.getElementById('video-player');
+    const statusElement = document.getElementById('status');
+    const shareContainer = document.getElementById('share-container');
+    const shareInput = document.getElementById('share-link');
+    const hostControls = document.getElementById('host-controls');
+    const viewerControls = document.getElementById('viewer-controls');
+    const instructionsBox = document.getElementById('instructions-box');
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const streamIdParam = urlParams.get('stream');
+
+    if (streamIdParam) {
+        // MODO ESPECTADOR
+        hostControls.style.display = 'none';
+        instructionsBox.style.display = 'none';
+        viewerControls.style.display = 'block';
+        document.getElementById('title').innerText = "Assistindo à Transmissão";
+        statusElement.innerText = "Conectando ao transmissor...";
+        connectToStream(streamIdParam);
+    }
+
+    async function startBroadcasting() {
+        try {
+            // 1. Captura Vídeo e Áudio da Tela
+            const displayStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { frameRate: { ideal: 30, max: 60 } },
+                audio: true
+            });
+
+            combinedStream = new MediaStream();
+
+            // Adiciona a faixa de vídeo
+            displayStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
+
+            // 2. Trata o áudio: Se a tela trouxer áudio, usa ele. Caso contrário, tenta capturar o microfone/áudio de fundo.
+            if (displayStream.getAudioTracks().length > 0) {
+                displayStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+                statusElement.innerText = "Áudio do sistema capturado com sucesso!";
+            } else {
+                try {
+                    const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    micStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
+                    statusElement.innerText = "Áudio da tela não detectado. Usando áudio do microfone/sistema!";
+                } catch (micErr) {
+                    statusElement.innerText = "AVISO: Transmitindo sem áudio (Permissão de áudio negada/não selecionada).";
+                }
+            }
+
+            // Exibe a transmissão na tela local
+            videoElement.srcObject = combinedStream;
+            videoElement.muted = true; // Mutado apenas no transmissor para não dar microfonia
+
+            peer = new Peer();
+
+            peer.on('open', (id) => {
+                const streamUrl = `${window.location.origin}${window.location.pathname}?stream=${id}`;
+                shareInput.value = streamUrl;
+                shareContainer.style.display = 'block';
+                document.getElementById('start-btn').disabled = true;
+            });
+
+            peer.on('connection', (conn) => {
+                const call = peer.call(conn.peer, combinedStream);
+                connectedPeers.push(call);
+
+                statusElement.innerText = `Transmissão ativa! Espectadores conectados: ${connectedPeers.length}`;
+
+                call.on('close', () => {
+                    connectedPeers = connectedPeers.filter(p => p !== call);
+                    statusElement.innerText = `Transmissão ativa! Espectadores conectados: ${connectedPeers.length}`;
+                });
+            });
+
+            displayStream.getVideoTracks()[0].onended = () => {
+                location.reload();
+            };
+
+        } catch (err) {
+            console.error(err);
+            statusElement.innerText = "Erro ao iniciar captura de tela.";
+        }
+    }
+
+    function connectToStream(hostId) {
+        peer = new Peer();
+
+        peer.on('open', () => {
+            const conn = peer.connect(hostId);
+
+            peer.on('call', (call) => {
+                call.answer();
+                call.on('stream', (remoteStream) => {
+                    videoElement.srcObject = remoteStream;
+                    videoElement.muted = false;
+                    
+                    videoElement.play().catch(() => {
+                        statusElement.innerText = "Conectado! Clique no botão '🔊 Clique Aqui para Ativar Som' acima.";
+                    });
+
+                    statusElement.innerText = "Transmissão ao vivo conectada!";
+                });
+            });
+        });
+    }
+
+    function enableAudio() {
+        videoElement.muted = false;
+        videoElement.volume = 1.0;
+        videoElement.play();
+        document.getElementById('unmute-btn').style.display = 'none';
+        statusElement.innerText = "Áudio ativado com sucesso!";
+    }
+
+    function copyLink() {
+        shareInput.select();
+        document.execCommand('copy');
+        alert("Link copiado!");
+    }
+</script>
+
+</body>
+</html>
