@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Transmissão com Áudio Completo</title>
+    <title>Transmissão com Contador de Espectadores</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -25,8 +25,45 @@
             width: 100%;
             max-width: 900px;
             text-align: center;
+            position: relative;
         }
-        h1 { font-size: 22px; color: #38bdf8; margin-bottom: 15px; }
+        .header-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        h1 { font-size: 22px; color: #38bdf8; text-align: left; }
+        
+        /* Badge do Contador */
+        .viewer-badge {
+            background-color: #0284c7;
+            color: #ffffff;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background-color: #22c55e;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
+        }
+
         .instructions {
             background: #334155;
             padding: 12px;
@@ -78,12 +115,18 @@
 <body>
 
 <div class="card">
-    <h1 id="title">Transmissão de Tela com Áudio</h1>
+    <div class="header-container">
+        <h1 id="title">Transmissão de Tela</h1>
+        
+        <!-- Badge Visível por Padrão quando a transmissão Iniciar -->
+        <div class="viewer-badge" id="viewer-badge" style="display: none;">
+            <span class="live-dot"></span>
+            <span id="viewer-count">0 pessoas assistindo</span>
+        </div>
+    </div>
 
     <div id="instructions-box" class="instructions">
-        💡 <b>Dica essencial para o som funcionar:</b><br>
-        1. Para transmitir o som do <b>YouTube / Navegador</b>: Escolha a opção <b>"Guia do Chrome/Edge"</b> ao transmitir e marque a caixinha <i>"Compartilhar áudio da guia"</i>.<br>
-        2. Para transmitir um <b>Programa ou Jogo</b>: O script tentará capturar o áudio do seu microfone/áudio do sistema.
+        💡 <b>Dica essencial para áudio (Google Chrome):</b> Ao clicar em Transmitir, selecione <b>"Guia do Chrome"</b> e marque a opção <i>"Compartilhar áudio da guia"</i>.
     </div>
 
     <div id="host-controls">
@@ -108,7 +151,7 @@
 <script>
     let peer = null;
     let combinedStream = null;
-    let connectedPeers = [];
+    let activeConnections = [];
 
     const videoElement = document.getElementById('video-player');
     const statusElement = document.getElementById('status');
@@ -117,6 +160,8 @@
     const hostControls = document.getElementById('host-controls');
     const viewerControls = document.getElementById('viewer-controls');
     const instructionsBox = document.getElementById('instructions-box');
+    const viewerBadge = document.getElementById('viewer-badge');
+    const viewerCountElement = document.getElementById('viewer-count');
 
     const urlParams = new URLSearchParams(window.location.search);
     const streamIdParam = urlParams.get('stream');
@@ -126,6 +171,7 @@
         hostControls.style.display = 'none';
         instructionsBox.style.display = 'none';
         viewerControls.style.display = 'block';
+        viewerBadge.style.display = 'inline-flex';
         document.getElementById('title').innerText = "Assistindo à Transmissão";
         statusElement.innerText = "Conectando ao transmissor...";
         connectToStream(streamIdParam);
@@ -133,34 +179,29 @@
 
     async function startBroadcasting() {
         try {
-            // 1. Captura Vídeo e Áudio da Tela
             const displayStream = await navigator.mediaDevices.getDisplayMedia({
                 video: { frameRate: { ideal: 30, max: 60 } },
                 audio: true
             });
 
             combinedStream = new MediaStream();
-
-            // Adiciona a faixa de vídeo
             displayStream.getVideoTracks().forEach(track => combinedStream.addTrack(track));
 
-            // 2. Trata o áudio: Se a tela trouxer áudio, usa ele. Caso contrário, tenta capturar o microfone/áudio de fundo.
             if (displayStream.getAudioTracks().length > 0) {
                 displayStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
-                statusElement.innerText = "Áudio do sistema capturado com sucesso!";
+                statusElement.innerText = "Áudio capturado com sucesso!";
             } else {
                 try {
                     const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     micStream.getAudioTracks().forEach(track => combinedStream.addTrack(track));
-                    statusElement.innerText = "Áudio da tela não detectado. Usando áudio do microfone/sistema!";
+                    statusElement.innerText = "Usando áudio do microfone/sistema!";
                 } catch (micErr) {
-                    statusElement.innerText = "AVISO: Transmitindo sem áudio (Permissão de áudio negada/não selecionada).";
+                    statusElement.innerText = "AVISO: Transmitindo sem áudio.";
                 }
             }
 
-            // Exibe a transmissão na tela local
             videoElement.srcObject = combinedStream;
-            videoElement.muted = true; // Mutado apenas no transmissor para não dar microfonia
+            videoElement.muted = true;
 
             peer = new Peer();
 
@@ -168,19 +209,26 @@
                 const streamUrl = `${window.location.origin}${window.location.pathname}?stream=${id}`;
                 shareInput.value = streamUrl;
                 shareContainer.style.display = 'block';
+                viewerBadge.style.display = 'inline-flex'; // Exibe o indicador imediatamente
                 document.getElementById('start-btn').disabled = true;
+                updateViewerCount();
             });
 
             peer.on('connection', (conn) => {
-                const call = peer.call(conn.peer, combinedStream);
-                connectedPeers.push(call);
-
-                statusElement.innerText = `Transmissão ativa! Espectadores conectados: ${connectedPeers.length}`;
-
-                call.on('close', () => {
-                    connectedPeers = connectedPeers.filter(p => p !== call);
-                    statusElement.innerText = `Transmissão ativa! Espectadores conectados: ${connectedPeers.length}`;
+                // Aguarda a abertura da conexão de dados para incluir na lista
+                conn.on('open', () => {
+                    activeConnections.push(conn);
+                    peer.call(conn.peer, combinedStream);
+                    updateViewerCount();
                 });
+
+                const removeConn = () => {
+                    activeConnections = activeConnections.filter(c => c !== conn);
+                    updateViewerCount();
+                };
+
+                conn.on('close', removeConn);
+                conn.on('error', removeConn);
             });
 
             displayStream.getVideoTracks()[0].onended = () => {
@@ -193,11 +241,36 @@
         }
     }
 
+    function updateViewerCount() {
+        const count = activeConnections.length;
+        const text = count === 1 ? "1 pessoa assistindo" : `${count} pessoas assistindo`;
+        viewerCountElement.innerText = text;
+
+        // Envia a contagem atualizada para todas as conexões ativas
+        activeConnections.forEach(conn => {
+            if (conn.open) {
+                conn.send({ type: 'VIEWER_COUNT', count: count });
+            }
+        });
+    }
+
     function connectToStream(hostId) {
         peer = new Peer();
 
         peer.on('open', () => {
             const conn = peer.connect(hostId);
+
+            conn.on('open', () => {
+                statusElement.innerText = "Conexão estabelecida com o transmissor...";
+            });
+
+            conn.on('data', (data) => {
+                if (data && data.type === 'VIEWER_COUNT') {
+                    const count = data.count;
+                    const text = count === 1 ? "1 pessoa assistindo" : `${count} pessoas assistindo`;
+                    viewerCountElement.innerText = text;
+                }
+            });
 
             peer.on('call', (call) => {
                 call.answer();
@@ -206,7 +279,7 @@
                     videoElement.muted = false;
                     
                     videoElement.play().catch(() => {
-                        statusElement.innerText = "Conectado! Clique no botão '🔊 Clique Aqui para Ativar Som' acima.";
+                        statusElement.innerText = "Conectado! Clique no botão verde '🔊 Clique Aqui para Ativar Som'.";
                     });
 
                     statusElement.innerText = "Transmissão ao vivo conectada!";
